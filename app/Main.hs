@@ -4,6 +4,7 @@ module Main where
 
 import Control.Applicative
 import Data.Char
+import Data.List (sortBy)
 import System.Environment (getArgs)
 
 data JsonNumber = JsonInt Integer | JsonFloat Double
@@ -129,13 +130,13 @@ anyChar = Parser $ \case
 sepBy :: Parser a -> Parser b -> Parser [b]
 sepBy sep element = (:) <$> element <*> many (sep *> element) <|> pure []
 
-formatJson :: JsonValue -> Int -> String
-formatJson JsonNull _ = "null"
-formatJson (JsonBool False) _ = "false"
-formatJson (JsonBool True) _ = "true"
-formatJson (JsonNumber (JsonInt n)) _ = show n
-formatJson (JsonNumber (JsonFloat f)) _ = show f
-formatJson (JsonString s) _ = '"' : format s ++ ['"']
+formatJson :: JsonValue -> Int -> Bool -> String
+formatJson JsonNull _ _ = "null"
+formatJson (JsonBool False) _ _ = "false"
+formatJson (JsonBool True) _ _ = "true"
+formatJson (JsonNumber (JsonInt n)) _ _ = show n
+formatJson (JsonNumber (JsonFloat f)) _ _ = show f
+formatJson (JsonString s) _ _ = '"' : format s ++ ['"']
   where
     format = concatMap f
     f '"' = "\\\""
@@ -145,40 +146,44 @@ formatJson (JsonString s) _ = '"' : format s ++ ['"']
     f '\r' = "\\r"
     f '\f' = "\\f"
     f c = [c]
-formatJson (JsonArray []) _ = "[]"
-formatJson (JsonArray a) n = "[\n" ++ elements ++ replicate n ' ' ++ "]"
+formatJson (JsonArray []) _ _ = "[]"
+formatJson (JsonArray a) n sort = "[\n" ++ elements ++ replicate n ' ' ++ "]"
   where
     elements = unlines $ f a
     f [x] = [line x]
     f (x : xs) = (line x ++ ",") : f xs
     f [] = error "Unreachable"
-    line x = replicate (n + 2) ' ' ++ formatJson x (n + 2)
-formatJson (JsonObject []) _ = "{}"
-formatJson (JsonObject o) n = "{\n" ++ elements ++ replicate n ' ' ++ "}"
+    line x = replicate (n + 2) ' ' ++ formatJson x (n + 2) sort
+formatJson (JsonObject []) _ _ = "{}"
+formatJson (JsonObject o) n sort = "{\n" ++ elements ++ replicate n ' ' ++ "}"
   where
-    elements = unlines $ f o
+    sorted = if sort then sortBy (\(a, _) (b, _) -> compare a b) o else o
+    elements = unlines $ f sorted
     f [(key, value)] = [line key value]
     f ((key, value) : xs) = (line key value ++ ",") : f xs
     f [] = error "Unreachable"
-    line key value = replicate (n + 2) ' ' ++ ['"'] ++ key ++ ['"'] ++ ": " ++ formatJson value (n + 2)
+    line key value = replicate (n + 2) ' ' ++ ['"'] ++ key ++ ['"'] ++ ": " ++ formatJson value (n + 2) sort
 
-formatString :: String -> String
-formatString s = case runParser jsonValue s of
-  Right (r, _) -> formatJson r 0
+formatString :: String -> Bool -> String
+formatString s sort = case runParser jsonValue s of
+  Right (r, _) -> formatJson r 0 sort
   Left l -> l
 
-formatFile :: FilePath -> IO String
-formatFile f = do
+formatFile :: FilePath -> Bool -> IO String
+formatFile f sort = do
   input <- readFile f
-  return (formatString input)
+  return (formatString input sort)
 
 main :: IO ()
 main = do
   args <- getArgs
   case args of
+    [file, "--sort"] ->
+      do
+        s <- formatFile file True
+        putStrLn s
     [file] ->
-      ( do
-          s <- formatFile file
-          putStrLn s
-      )
-    _ -> putStrLn "Usage: json-formatter <file>"
+      do
+        s <- formatFile file False
+        putStrLn s
+    _ -> putStrLn "Usage: json-formatter <file> [--sort]"
